@@ -1,30 +1,7 @@
 import { NextResponse } from 'next/server'
-import { writeFile, readFile } from 'fs/promises'
-import { join } from 'path'
-import { mkdir } from 'fs/promises'
-import { existsSync } from 'fs'
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
-
-// Create uploads directory if it doesn't exist
-const UPLOADS_DIR = join(process.cwd(), 'public', 'uploads')
-if (!existsSync(UPLOADS_DIR)) {
-  await mkdir(UPLOADS_DIR, { recursive: true })
-}
-
-// Supported file types
-const SUPPORTED_FILE_TYPES = {
-  'application/pdf': 'pdf',
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-  'image/jpg': 'jpg',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
-  'application/vnd.ms-excel': 'xls',
-  'application/msword': 'doc',
-  'text/plain': 'txt'
-}
 
 const SYSTEM_PROMPT = `You are STAY, an AI companion designed to support teens with mental health challenges and prevent suicide.
 Your responses should be:
@@ -58,44 +35,20 @@ export async function POST(req: Request) {
       throw new Error('Gemini API key is not configured')
     }
 
-    // Accept both JSON and formData
     let message = ''
-    let file = null
-    let userId = ''
     let systemPrompt = SYSTEM_PROMPT
-    let fileUrl = null
 
     const contentType = req.headers.get('content-type') || ''
     if (contentType.includes('application/json')) {
       const body = await req.json()
       message = body.message
-      fileUrl = body.fileUrl
-      userId = body.userId || ''
       if (body.systemPrompt) systemPrompt = body.systemPrompt
     } else {
-      const formData = await req.formData()
-      message = formData.get('message') as string
-      file = formData.get('file') as File | null
-      userId = formData.get('userId') as string
-      if (formData.get('systemPrompt')) systemPrompt = formData.get('systemPrompt') as string
-      if (file) {
-        // Validate file type
-        if (!SUPPORTED_FILE_TYPES[file.type as keyof typeof SUPPORTED_FILE_TYPES]) {
-          return NextResponse.json(
-            { error: 'Unsupported file type' },
-            { status: 400 }
-          )
-        }
-        const bytes = await file.arrayBuffer()
-        const buffer = Buffer.from(bytes)
-        const fileExtension = SUPPORTED_FILE_TYPES[file.type as keyof typeof SUPPORTED_FILE_TYPES]
-        const fileName = `${Date.now()}-${file.name}`
-        const filePath = join(UPLOADS_DIR, fileName)
-        await writeFile(filePath, buffer)
-        fileUrl = `/uploads/${fileName}`
-        // Add file context to the message
-        message += `\n[File attached: ${file.name} (${fileExtension.toUpperCase()})]`
-      }
+      // Only support JSON in production
+      return NextResponse.json(
+        { error: 'Only JSON requests are supported in production' },
+        { status: 400 }
+      )
     }
 
     const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
@@ -147,8 +100,7 @@ export async function POST(req: Request) {
     const aiResponse = data.candidates[0].content.parts[0].text
 
     return NextResponse.json({ 
-      message: aiResponse,
-      fileUrl
+      message: aiResponse
     })
   } catch (error) {
     console.error('Chat API error:', error)
@@ -162,32 +114,9 @@ export async function POST(req: Request) {
 // Get chat history
 export async function GET(req: Request) {
   try {
-    const { searchParams } = new URL(req.url)
-    const userId = searchParams.get('userId')
-    const days = parseInt(searchParams.get('days') || '30')
-
-    if (!userId) {
-      return NextResponse.json({ error: 'User ID is required' }, { status: 400 })
-    }
-
-    const chatHistoryPath = join(process.cwd(), 'data', 'chat-history.json')
-    let chatHistoryData = []
-    try {
-      const existingData = await readFile(chatHistoryPath, 'utf-8')
-      chatHistoryData = JSON.parse(existingData)
-    } catch (error) {
-      // File doesn't exist or is invalid, return empty array
-    }
-
-    // Filter by user ID and date range
-    const cutoffDate = new Date()
-    cutoffDate.setDate(cutoffDate.getDate() - days)
-
-    const filteredHistory = chatHistoryData.filter((chat: any) => {
-      return chat.userId === userId && new Date(chat.timestamp) >= cutoffDate
-    })
-
-    return NextResponse.json({ history: filteredHistory })
+    // For Netlify/production, persistent server-side storage is not available
+    // Return an empty history array or a static message
+    return NextResponse.json({ history: [] })
   } catch (error) {
     console.error('Chat history error:', error)
     return NextResponse.json(
