@@ -83,6 +83,17 @@ export default function Hope() {
 
   const [isPrivate, setIsPrivate] = useState(false);
 
+  // Load from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem('hopePhotos')
+    if (stored) setHopePhotos(JSON.parse(stored))
+  }, [])
+
+  // Save to localStorage on change
+  useEffect(() => {
+    localStorage.setItem('hopePhotos', JSON.stringify(hopePhotos))
+  }, [hopePhotos])
+
   useEffect(() => {
     setUserStats({ photos: hopePhotos.length, stories: whyIStayStories.length });
     if (hopePhotos.length === 0 && whyIStayStories.length === 0) {
