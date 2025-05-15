@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import AffirmationCard from './AffirmationCard'
 import toast from 'react-hot-toast'
@@ -55,9 +55,6 @@ export default function Hope() {
   const [storyText, setStoryText] = useState('')
   const [storyPhoto, setStoryPhoto] = useState<string | undefined>(undefined)
   const [selectedCategory, setSelectedCategory] = useState<Category>('all')
-  const [tags, setTags] = useState<string[]>([])
-  const [currentTag, setCurrentTag] = useState('')
-  const [description, setDescription] = useState('')
   
   // UI state
   const [activeTab, setActiveTab] = useState<'gallery' | 'stories'>('gallery')
@@ -83,11 +80,24 @@ export default function Hope() {
 
   const [isPrivate, setIsPrivate] = useState(false);
 
-  // Load from localStorage on mount
+  // --- IG-like Upload Flow State ---
+  const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
+  const [pendingPhotoName, setPendingPhotoName] = useState<string>('');
+  const [pendingDescription, setPendingDescription] = useState('');
+  const [pendingTags, setPendingTags] = useState<string[]>([]);
+  const [pendingTagInput, setPendingTagInput] = useState('');
+
+  // Load from localStorage on mount (robust)
   useEffect(() => {
-    const stored = localStorage.getItem('hopePhotos')
-    if (stored) setHopePhotos(JSON.parse(stored))
-  }, [])
+    const stored = localStorage.getItem('hopePhotos');
+    if (stored) {
+      try {
+        setHopePhotos(JSON.parse(stored));
+      } catch {
+        setHopePhotos([]);
+      }
+    }
+  }, []);
 
   // Save to localStorage on change
   useEffect(() => {
@@ -120,62 +130,56 @@ export default function Hope() {
     setAiMessage(`📝 Try this: ${aiPrompts[Math.floor(Math.random() * aiPrompts.length)]}`);
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
+  // --- IG-like Upload Handlers ---
+  const handleIGPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
     reader.onload = (ev) => {
-      setHopePhotos(prev => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          url: ev.target?.result as string,
-          name: file.name,
-          reported: false,
-          category: selectedCategory,
-          description: description,
-          tags: tags.length > 0 ? [...tags] : [],
-          createdAt: new Date().toISOString(),
-          reactions: { likes: 0, hearts: 0, stars: 0 },
-          isPrivate: isPrivate,
-          comments: [],
-        }
-      ])
-    }
-    reader.readAsDataURL(file)
-  }
+      setPendingPhoto(ev.target?.result as string);
+      setPendingPhotoName(file.name);
+    };
+    reader.readAsDataURL(file);
+  };
 
-  const handleStoryPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      setStoryPhoto(ev.target?.result as string)
+  const handleIGAddTag = () => {
+    if (pendingTagInput.trim() && !pendingTags.includes(pendingTagInput.trim())) {
+      setPendingTags([...pendingTags, pendingTagInput.trim()]);
+      setPendingTagInput('');
     }
-    reader.readAsDataURL(file)
-  }
+  };
 
-  const handleStorySubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!storyText.trim()) return
-    setWhyIStayStories(prev => [
+  const handleIGRemoveTag = (tag: string) => {
+    setPendingTags(pendingTags.filter(t => t !== tag));
+  };
+
+  const handleIGPost = () => {
+    if (!pendingPhoto || !pendingDescription.trim()) {
+      toast.error('Please select a photo and add a description.');
+      return;
+    }
+    setHopePhotos(prev => [
+      ...prev,
       {
         id: Date.now().toString(),
-        text: storyText.trim(),
-        photo: storyPhoto,
-        date: new Date().toISOString(),
+        url: pendingPhoto,
+        name: pendingPhotoName,
         reported: false,
         category: selectedCategory,
-        tags: tags.length > 0 ? [...tags] : [],
+        description: pendingDescription,
+        tags: pendingTags.length > 0 ? [...pendingTags] : [],
+        createdAt: new Date().toISOString(),
         reactions: { likes: 0, hearts: 0, stars: 0 },
         isPrivate: isPrivate,
         comments: [],
-      },
-      ...prev,
-    ])
-    setStoryText('')
-    setStoryPhoto(undefined)
-  }
+      }
+    ]);
+    setPendingPhoto(null);
+    setPendingPhotoName('');
+    setPendingDescription('');
+    setPendingTags([]);
+    setPendingTagInput('');
+  };
 
   // Handle reactions
   const handleReaction = (type: 'photo' | 'story', id: string, reactionType: 'likes' | 'hearts' | 'stars') => {
@@ -194,16 +198,6 @@ export default function Hope() {
 
   // Toggle privacy
   const togglePrivacy = (type: 'photo' | 'story', id: string) => {
-    // Implementation needed
-  }
-
-  // Add tag
-  const handleAddTag = () => {
-    // Implementation needed
-  }
-
-  // Remove tag
-  const handleRemoveTag = (tag: string) => {
     // Implementation needed
   }
 
@@ -257,23 +251,56 @@ export default function Hope() {
       }
     })
 
+  // Combine photos and stories, sort by date (newest first)
+  const galleryItems = [
+    ...hopePhotos.map(p => ({
+      type: 'photo',
+      id: p.id,
+      url: p.url,
+      text: p.description,
+      date: p.createdAt,
+      name: p.name,
+      tags: p.tags || [],
+    })),
+    ...whyIStayStories.map(s => ({
+      type: 'story',
+      id: s.id,
+      url: s.photo,
+      text: s.text,
+      date: s.date,
+      name: undefined,
+      tags: s.tags || [],
+    })),
+  ].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+  // Format date helper
+  function formatDate(dateStr?: string) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleString();
+  }
+
+  // --- Enhanced Search ---
+  const searchLower = searchQuery.toLowerCase();
+  const filteredGalleryItems = galleryItems.filter(item => {
+    const textMatch = item.text?.toLowerCase().includes(searchLower);
+    const tagMatch = (item.tags || []).some(tag => tag.toLowerCase().includes(searchLower.replace('#', '')));
+    return textMatch || tagMatch;
+  });
+
+  // Animated background stars (fix hydration)
+  const stars = useMemo(() => (
+    Array.from({ length: 12 }).map((_, i) => ({
+      left: Math.random() * 100,
+      top: Math.random() * 100,
+      width: 24 + Math.random() * 32,
+      height: 24 + Math.random() * 32,
+      delay: i * 0.7,
+    }))
+  ), []);
+
   return (
     <div className="max-w-4xl mx-auto p-4 relative">
-      {/* Animated magical background */}
-      <div className="absolute inset-0 z-0 pointer-events-none animate-float-bg">
-        {[...Array(12)].map((_, i) => (
-          <div key={i} className={`absolute rounded-full opacity-30 animate-pulse`} style={{
-            left: `${Math.random() * 100}%`,
-            top: `${Math.random() * 100}%`,
-            width: `${24 + Math.random() * 32}px`,
-            height: `${24 + Math.random() * 32}px`,
-            background: 'radial-gradient(circle, #f472b6 0%, #a78bfa 100%)',
-            filter: 'blur(2px)',
-            animationDelay: `${i * 0.7}s`,
-          }} />
-        ))}
-      </div>
-
       <AffirmationCard />
 
       {/* Privacy/Safety Info Card */}
@@ -423,6 +450,113 @@ export default function Hope() {
         <hr className="border-t-2 border-purple-200 my-4" />
       </div>
 
+      {/* Hope Galleries and Stories Heading */}
+      <h2 className="text-3xl font-bold text-center text-purple-700 mb-8 drop-shadow">Hope Galleries and Stories</h2>
+      {/* IG-like Gallery - now in a grid layout */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8 max-w-4xl mx-auto mb-12">
+        {filteredGalleryItems.length === 0 && (
+          <div className="text-center text-gray-400 col-span-full">No posts yet. Upload a photo or share a story!</div>
+        )}
+        {filteredGalleryItems.map(item => (
+          <div
+            key={item.type + '-' + item.id}
+            className="bg-white/90 rounded-2xl shadow-lg p-0 flex flex-col items-center border border-purple-100 hover:shadow-2xl transition-shadow group overflow-hidden"
+          >
+            {item.url && (
+              <img
+                src={item.url}
+                alt={item.name || 'Hope post'}
+                className="w-full h-64 object-cover group-hover:scale-105 transition-transform duration-200"
+                style={{ maxHeight: 256 }}
+              />
+            )}
+            <div className="w-full flex-1 flex flex-col justify-between p-4">
+              <div className="mb-2 text-base text-gray-800 whitespace-pre-line break-words">{item.text}</div>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {(item.tags || []).map(tag => (
+                  <span
+                    key={tag}
+                    className="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-700 font-semibold cursor-pointer hover:bg-purple-200"
+                    onClick={() => setSearchQuery('#' + tag)}
+                  >
+                    #{tag}
+                  </span>
+                ))}
+              </div>
+              <div className="text-xs text-gray-500 mt-auto">{formatDate(item.date)}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* IG-like Upload Form */}
+      <div className="mb-8 bg-white/60 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/30 p-6 max-w-2xl mx-auto">
+        <h2 className="text-xl font-bold text-purple-700 mb-4">Share a Hopeful Moment</h2>
+        <div className="mb-4">
+          <label className="block text-purple-800 font-bold mb-2">Step 1: Choose a Photo</label>
+          <input type="file" accept="image/*" onChange={handleIGPhotoUpload} />
+        </div>
+        {pendingPhoto && (
+          <div className="mb-4 flex flex-col items-center">
+            <img src={pendingPhoto} alt="Preview" className="rounded-xl shadow-lg max-w-xs mb-2 object-cover" style={{maxHeight: 240}} />
+            <span className="text-xs text-gray-500">{pendingPhotoName}</span>
+          </div>
+        )}
+        <div className="mb-4">
+          <label className="block text-purple-800 font-bold mb-2">Step 2: Add a Description</label>
+          <textarea
+            value={pendingDescription}
+            onChange={e => setPendingDescription(e.target.value)}
+            placeholder="Add a description... (e.g. Why is this special to you?)"
+            className="w-full p-3 rounded-xl border-2 border-purple-300 focus:border-purple-600 focus:outline-none bg-white/80 backdrop-blur-md min-h-[80px] text-base text-purple-900 placeholder-gray-600 shadow-inner transition-all"
+          />
+        </div>
+        <div className="mb-4">
+          <label className="block text-purple-800 font-bold mb-2">Step 3: Add Tags</label>
+          <div className="flex gap-2 mb-2">
+            <input
+              type="text"
+              value={pendingTagInput}
+              onChange={e => setPendingTagInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleIGAddTag())}
+              placeholder="Add a tag... (e.g. family, hope, summer)"
+              className="flex-1 p-2 rounded-xl border-2 border-purple-300 focus:border-purple-600 focus:outline-none bg-white/80 backdrop-blur-md text-base text-purple-900 placeholder-gray-600 shadow-inner transition-all"
+            />
+            <button
+              onClick={handleIGAddTag}
+              className="px-6 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold shadow-lg hover:from-purple-700 hover:to-pink-700 transition-colors border-2 border-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              type="button"
+            >
+              Add
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {pendingTags.map(tag => (
+              <span
+                key={tag}
+                className="px-3 py-1 rounded-full bg-purple-200 text-purple-800 flex items-center gap-2 border border-purple-300 shadow-sm"
+              >
+                #{tag}
+                <button
+                  onClick={() => handleIGRemoveTag(tag)}
+                  className="hover:text-purple-900 focus:outline-none"
+                  type="button"
+                >
+                  <XMarkIcon className="w-4 h-4" />
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+        <button
+          onClick={handleIGPost}
+          className="w-full py-3 rounded font-bold text-white bg-fuchsia-600 hover:bg-fuchsia-700 transition-colors mb-4 disabled:opacity-60"
+          type="button"
+        >
+          Post
+        </button>
+      </div>
+
       {/* Content Area */}
       <AnimatePresence mode="wait">
         {activeTab === 'gallery' ? (
@@ -436,84 +570,6 @@ export default function Hope() {
           >
             <div className="absolute inset-0 pointer-events-none z-0" style={{background: 'radial-gradient(circle at 80% 20%, rgba(255,0,255,0.08) 0%, transparent 70%)'}} />
             <h2 className="text-xl font-bold text-purple-700 mb-2 z-10 relative">Hope Gallery</h2>
-            
-            {/* Upload Form */}
-            <div className="mb-6 z-10 relative">
-              <h3 className="text-xl font-bold text-purple-700 mb-2">Step 1: Upload a Photo</h3>
-              <label className="block text-purple-800 font-bold mb-2">Upload a photo of someone or something you love:</label>
-              <div className="flex items-center gap-4 mb-4">
-                <label htmlFor="hope-photo-upload" className="cursor-pointer px-5 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold shadow-lg hover:from-purple-600 hover:to-pink-600 transition-colors border-2 border-purple-300 focus-within:ring-2 focus-within:ring-purple-500">
-                  Choose File
-                  <input
-                    id="hope-photo-upload"
-                    type="file"
-                    accept="image/*"
-                    onChange={handlePhotoUpload}
-                    ref={fileInputRef}
-                    className="hidden"
-                  />
-                </label>
-                <span className="text-sm text-gray-700 truncate">
-                  {fileInputRef.current && fileInputRef.current.files && fileInputRef.current.files[0]?.name ? fileInputRef.current.files[0].name : 'No file chosen'}
-                </span>
-              </div>
-              <h3 className="text-xl font-bold text-purple-700 mb-2 mt-6">Step 2: Add Details</h3>
-              <div className="mb-4">
-                <label className="block text-purple-800 font-bold mb-2">Description:</label>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Add a description... (e.g. Why is this special to you?)"
-                  className="w-full p-3 rounded-xl border-2 border-purple-300 focus:border-purple-600 focus:outline-none bg-white/80 backdrop-blur-md min-h-[80px] text-base text-purple-900 placeholder-gray-600 shadow-inner transition-all"
-                />
-              </div>
-              <div className="mb-4">
-                <label className="block text-purple-800 font-bold mb-2">Tags:</label>
-                <div className="flex gap-2 mb-2">
-                  <input
-                    type="text"
-                    value={currentTag}
-                    onChange={(e) => setCurrentTag(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleAddTag()}
-                    placeholder="Add a tag... (e.g. family, hope, summer)"
-                    className="flex-1 p-2 rounded-xl border-2 border-purple-300 focus:border-purple-600 focus:outline-none bg-white/80 backdrop-blur-md text-base text-purple-900 placeholder-gray-600 shadow-inner transition-all"
-                  />
-                  <button
-                    onClick={handleAddTag}
-                    className="px-6 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold shadow-lg hover:from-purple-700 hover:to-pink-700 transition-colors border-2 border-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                  >
-                    Add
-                  </button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="px-3 py-1 rounded-full bg-purple-200 text-purple-800 flex items-center gap-2 border border-purple-300 shadow-sm"
-                    >
-                      {tag}
-                      <button
-                        onClick={() => handleRemoveTag(tag)}
-                        className="hover:text-purple-900 focus:outline-none"
-                      >
-                        <XMarkIcon className="w-4 h-4" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-700">
-                <input 
-                  type="checkbox" 
-                  id="photoIsPrivate" 
-                  checked={isPrivate} 
-                  onChange={() => setIsPrivate(!isPrivate)} 
-                  className="rounded border-purple-300 text-purple-700 focus:ring-purple-600"
-                />
-                <label htmlFor="photoIsPrivate">Keep this photo private (only visible to you)</label>
-              </div>
-            </div>
-            
             {/* Photo Grid */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 z-10 relative">
               {filteredPhotos.map((photo) => (
@@ -593,67 +649,6 @@ export default function Hope() {
           >
             <div className="absolute inset-0 pointer-events-none z-0" style={{background: 'radial-gradient(circle at 80% 20%, rgba(255,0,255,0.08) 0%, transparent 70%)'}} />
             <h2 className="text-xl font-bold text-pink-700 mb-2 z-10 relative">Why I Stay</h2>
-            
-            {/* Story Form */}
-            <form onSubmit={handleStorySubmit} className="mb-6 z-10 relative flex flex-col gap-2">
-              <h3 className="text-xl font-bold text-pink-700 mb-2">Step 1: Write Your Story</h3>
-              <textarea
-                value={storyText}
-                onChange={e => setStoryText(e.target.value)}
-                placeholder="Share your reason for staying... (your story can help others!)"
-                className="w-full p-3 rounded-xl border-2 border-pink-300 focus:border-pink-600 focus:outline-none bg-white/90 backdrop-blur-md min-h-[80px] text-gray-900 placeholder-gray-700"
-              />
-              <h3 className="text-xl font-bold text-pink-700 mb-2 mt-6">Step 2: (Optional) Add a Photo or Tags</h3>
-              <input type="file" accept="image/*" onChange={handleStoryPhotoUpload} ref={storyPhotoInputRef} className="mb-2" />
-              <div className="mb-4">
-                <label className="block text-pink-800 font-bold mb-2">Tags:</label>
-                <div className="flex gap-2 mb-2">
-                  <input
-                    type="text"
-                    value={currentTag}
-                    onChange={(e) => setCurrentTag(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleAddTag()}
-                    placeholder="Add a tag... (e.g. hope, gratitude, resilience)"
-                    className="flex-1 p-2 rounded-xl border-2 border-pink-300 focus:border-pink-600 focus:outline-none bg-white/90 backdrop-blur-md text-base text-pink-900 placeholder-gray-700 shadow-inner transition-all"
-                  />
-                  <button
-                    onClick={handleAddTag}
-                    className="px-6 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 text-white font-bold shadow-lg hover:from-pink-700 hover:to-purple-700 transition-colors border-2 border-pink-300 focus:outline-none focus:ring-2 focus:ring-pink-500"
-                  >
-                    Add
-                  </button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="px-3 py-1 rounded-full bg-pink-200 text-pink-800 flex items-center gap-2 border border-pink-300 shadow-sm"
-                    >
-                      {tag}
-                      <button
-                        onClick={() => handleRemoveTag(tag)}
-                        className="hover:text-pink-900 focus:outline-none"
-                      >
-                        <XMarkIcon className="w-4 h-4" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-700">
-                <input 
-                  type="checkbox" 
-                  id="storyIsPrivate" 
-                  checked={isPrivate} 
-                  onChange={() => setIsPrivate(!isPrivate)} 
-                  className="rounded border-pink-300 text-pink-700 focus:ring-pink-600"
-                />
-                <label htmlFor="storyIsPrivate">Keep this story private (only visible to you)</label>
-              </div>
-              <span className="text-xs text-gray-700">Please do not share identifying information. All submissions are reviewed for safety.</span>
-              <button type="submit" className="self-end px-8 py-2 rounded-full bg-gradient-to-r from-pink-700 to-purple-700 text-white font-bold shadow-lg hover:opacity-90 transition-opacity animate-glow">Share Hope</button>
-            </form>
-            
             {/* Stories Grid */}
             <div className="grid gap-4 md:grid-cols-2 z-10 relative">
               {filteredStories.map((story) => (

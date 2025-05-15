@@ -9,6 +9,7 @@ const navigation = [
   { name: 'Journal', href: '/journal' },
   { name: 'Chat', href: '/chat' },
   { name: 'Resources', href: '/resources' },
+  { name: 'Login', href: '/login' },
 ]
 
 export default function Navigation() {
